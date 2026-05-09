@@ -17,8 +17,9 @@ from app.ui.sidebar import SidebarFrame
 from app.ui.file_list_frame import FileListFrame
 from app.ui.preview_dialog import PreviewDialog
 from app.ui.result_dialog import ResultDialog
-from app.core.file_generator import build_plans_for_folder, execute_plans
-from app.core.date_calculator import suggest_next_date
+from app.core.file_generator import build_plans_for_folder, build_plan, execute_plans
+from app.core.date_calculator import suggest_next_date, infer_next_date, parse_date_from_text
+from app.core.pattern_detector import scan_folder
 from app.version import VERSION, APP_NAME
 
 
@@ -46,6 +47,7 @@ class MainWindow(ctk.CTk):
         self._sidebar = SidebarFrame(
             self,
             on_folder_selected=self._on_folder_selected,
+            on_batch_generate=self._batch_generate,
             width=220,
         )
         self._sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(8, 0), pady=8)
@@ -198,6 +200,64 @@ class MainWindow(ctk.CTk):
         folder = self._file_list._folder_path
         if folder:
             self._file_list.load_folder(folder)
+
+    # ── 그룹 일괄 생성 ─────────────────────────────────────────────────────────
+    def _batch_generate(self, group_key: str, folder_paths: List[str]):
+        """주간 또는 월간 그룹의 모든 폴더를 날짜 자동 추론 후 일괄 생성합니다."""
+        from app.core.file_generator import GenerationPlan
+
+        all_plans: List[GenerationPlan] = []
+        skipped: List[str] = []
+
+        for folder_path in folder_paths:
+            file_infos = scan_folder(folder_path)
+            detected = [fi for fi in file_infos if fi.detected]
+            if not detected:
+                skipped.append(folder_path)
+                continue
+
+            # 날짜 목록 추출 → 다음 날짜 추론
+            dates = []
+            for fi in detected:
+                d = parse_date_from_text(fi.detected.pattern_name, fi.detected.date_text)
+                if d:
+                    dates.append(d)
+
+            target_date = infer_next_date(dates)
+            if target_date is None:
+                skipped.append(folder_path)
+                continue
+
+            # 가장 최근 파일 10개만 plan 생성
+            for fi in detected[:10]:
+                plan = build_plan(fi.full_path, target_date)
+                if plan:
+                    all_plans.append(plan)
+
+        if not all_plans:
+            msg = "생성할 파일을 찾지 못했습니다.\n폴더 내 날짜 패턴이 있는 파일을 확인해주세요."
+            if skipped:
+                msg += "\n\n건너뜀: " + "\n".join(os.path.basename(p) for p in skipped)
+            messagebox.showwarning("일괄 생성", msg)
+            return
+
+        dlg = PreviewDialog(self, all_plans)
+        self.wait_window(dlg)
+        if not dlg.is_confirmed():
+            return
+
+        has_existing = any(p.already_exists for p in all_plans)
+        overwrite = False
+        if has_existing:
+            overwrite = messagebox.askyesno(
+                "파일 중복", "이미 존재하는 파일이 있습니다.\n덮어쓰시겠습니까?"
+            )
+
+        results = execute_plans(all_plans, overwrite=overwrite)
+        self._save_history(results)
+
+        dlg = ResultDialog(self, results)
+        self.wait_window(dlg)
 
     # ── 이력 저장 ─────────────────────────────────────────────────────────────
     def _save_history(self, results):

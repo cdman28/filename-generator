@@ -1,4 +1,4 @@
 """앱 버전 정보"""
-VERSION = "1.1"
+VERSION = "1.2"
 APP_NAME = "파일명 수정 도우미"
 APP_NAME_EN = "filename-generator"

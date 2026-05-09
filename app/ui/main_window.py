@@ -211,7 +211,8 @@ class MainWindow(ctk.CTk):
 
         for folder_path in folder_paths:
             file_infos = scan_folder(folder_path)
-            detected = [fi for fi in file_infos if fi.detected]
+            # FilePatternInfo.pattern 이 DetectedPattern (cycle, pattern_name, matched_text)
+            detected = [fi for fi in file_infos if fi.pattern]
             if not detected:
                 skipped.append(folder_path)
                 continue
@@ -219,7 +220,7 @@ class MainWindow(ctk.CTk):
             # 날짜 목록 추출 → 다음 날짜 추론
             dates = []
             for fi in detected:
-                d = parse_date_from_text(fi.detected.pattern_name, fi.detected.date_text)
+                d = parse_date_from_text(fi.pattern.pattern_name, fi.pattern.matched_text)
                 if d:
                     dates.append(d)
 
@@ -228,9 +229,10 @@ class MainWindow(ctk.CTk):
                 skipped.append(folder_path)
                 continue
 
-            # 가장 최근 파일 10개만 plan 생성
+            # 가장 최근 파일 10개만 plan 생성 (full_path = 폴더 + 파일명)
             for fi in detected[:10]:
-                plan = build_plan(fi.full_path, target_date)
+                full_path = os.path.join(folder_path, fi.filename)
+                plan = build_plan(full_path, target_date)
                 if plan:
                     all_plans.append(plan)
 
@@ -241,19 +243,26 @@ class MainWindow(ctk.CTk):
             messagebox.showwarning("일괄 생성", msg)
             return
 
-        dlg = PreviewDialog(self, all_plans)
+        # checkable=True: 각 파일 행에 체크박스 표시 → 제외 선택 가능
+        dlg = PreviewDialog(self, all_plans, checkable=True)
         self.wait_window(dlg)
         if not dlg.is_confirmed():
             return
 
-        has_existing = any(p.already_exists for p in all_plans)
+        # 체크된 plan만 실행
+        final_plans = dlg.get_checked_plans()
+        if not final_plans:
+            messagebox.showinfo("일괄 생성", "선택된 파일이 없습니다.")
+            return
+
+        has_existing = any(p.already_exists for p in final_plans)
         overwrite = False
         if has_existing:
             overwrite = messagebox.askyesno(
                 "파일 중복", "이미 존재하는 파일이 있습니다.\n덮어쓰시겠습니까?"
             )
 
-        results = execute_plans(all_plans, overwrite=overwrite)
+        results = execute_plans(final_plans, overwrite=overwrite)
         self._save_history(results)
 
         dlg = ResultDialog(self, results)

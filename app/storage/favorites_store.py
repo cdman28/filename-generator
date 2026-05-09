@@ -25,7 +25,8 @@ def detect_folder_group(folder_path: str) -> str:
         files = scan_folder(folder_path)
         if not files:
             return "unknown"
-        cycles = [f.cycle for f in files if f.cycle]
+        # FilePatternInfo.pattern 은 Optional[DetectedPattern], .cycle 은 pattern 안에 있음
+        cycles = [f.pattern.cycle for f in files if f.pattern]
         if not cycles:
             return "unknown"
         weekly_count = cycles.count("weekly")

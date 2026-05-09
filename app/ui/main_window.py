@@ -217,33 +217,40 @@ class MainWindow(ctk.CTk):
                 skipped.append(folder_path)
                 continue
 
-            # 날짜 부분(matched_text)을 파일명에서 제거한 값을 키로 그룹핑
-            # scan_folder는 mtime 내림차순 → 첫 번째가 각 그룹의 가장 최신 파일
-            seen: dict = {}
+            # 날짜 부분(matched_text)을 제거한 키로 그룹핑, 파일명 날짜 기준 최신 선택
+            seen: dict = {}  # key → (FilePatternInfo, date | None)
+            all_dates: list = []
             for fi in detected:
+                fi_date = parse_date_from_text(fi.pattern.pattern_name, fi.pattern.matched_text)
+                if fi_date:
+                    all_dates.append(fi_date)
                 key = fi.filename.replace(fi.pattern.matched_text, "", 1)
                 if key not in seen:
-                    seen[key] = fi
-            representative_files = list(seen.values())
+                    seen[key] = (fi, fi_date)
+                elif fi_date and (seen[key][1] is None or fi_date > seen[key][1]):
+                    # 파일명 날짜가 더 최신이면 교체
+                    seen[key] = (fi, fi_date)
 
-            # 대표 파일(패턴별 최신 1개)에서만 날짜 추출 → 다음 날짜 추론
-            dates = []
-            for fi in representative_files:
-                d = parse_date_from_text(fi.pattern.pattern_name, fi.pattern.matched_text)
-                if d:
-                    dates.append(d)
-
-            target_date = infer_next_date(dates)
-            if target_date is None:
-                skipped.append(folder_path)
-                continue
-
-            # 대표 파일(패턴별 최신 1개)로만 plan 생성
-            for fi in representative_files:
+            # 대표 파일(패턴별 최신 1개)로 plan 생성
+            # 주간: 각 파일의 날짜 + 7일 고정 / 월간: 폴더 전체 날짜로 다음 날짜 추론
+            folder_has_plan = False
+            for fi, fi_date in seen.values():
+                if fi_date is None:
+                    continue
+                if group_key == "weekly":
+                    target_date: date | None = fi_date + timedelta(days=7)
+                else:
+                    target_date = infer_next_date(all_dates)
+                if target_date is None:
+                    continue
                 full_path = os.path.join(folder_path, fi.filename)
                 plan = build_plan(full_path, target_date)
                 if plan:
                     all_plans.append(plan)
+                    folder_has_plan = True
+
+            if not folder_has_plan:
+                skipped.append(folder_path)
 
         if not all_plans:
             msg = "생성할 파일을 찾지 못했습니다.\n폴더 내 날짜 패턴이 있는 파일을 확인해주세요."

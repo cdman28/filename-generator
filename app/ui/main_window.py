@@ -217,9 +217,18 @@ class MainWindow(ctk.CTk):
                 skipped.append(folder_path)
                 continue
 
-            # 날짜 목록 추출 → 다음 날짜 추론
-            dates = []
+            # 날짜 부분(matched_text)을 파일명에서 제거한 값을 키로 그룹핑
+            # scan_folder는 mtime 내림차순 → 첫 번째가 각 그룹의 가장 최신 파일
+            seen: dict = {}
             for fi in detected:
+                key = fi.filename.replace(fi.pattern.matched_text, "", 1)
+                if key not in seen:
+                    seen[key] = fi
+            representative_files = list(seen.values())
+
+            # 대표 파일(패턴별 최신 1개)에서만 날짜 추출 → 다음 날짜 추론
+            dates = []
+            for fi in representative_files:
                 d = parse_date_from_text(fi.pattern.pattern_name, fi.pattern.matched_text)
                 if d:
                     dates.append(d)
@@ -229,8 +238,8 @@ class MainWindow(ctk.CTk):
                 skipped.append(folder_path)
                 continue
 
-            # 가장 최근 파일 10개만 plan 생성 (full_path = 폴더 + 파일명)
-            for fi in detected[:10]:
+            # 대표 파일(패턴별 최신 1개)로만 plan 생성
+            for fi in representative_files:
                 full_path = os.path.join(folder_path, fi.filename)
                 plan = build_plan(full_path, target_date)
                 if plan:

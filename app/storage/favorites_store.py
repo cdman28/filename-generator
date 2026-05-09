@@ -18,6 +18,25 @@ def _ensure_data_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def detect_folder_group(folder_path: str) -> str:
+    """폴더 내 파일 패턴을 분석하여 그룹(weekly/monthly/unknown)을 자동 감지합니다."""
+    try:
+        from app.core.pattern_detector import scan_folder
+        files = scan_folder(folder_path)
+        if not files:
+            return "unknown"
+        cycles = [f.cycle for f in files if f.cycle]
+        if not cycles:
+            return "unknown"
+        weekly_count = cycles.count("weekly")
+        monthly_count = cycles.count("monthly")
+        if weekly_count == 0 and monthly_count == 0:
+            return "unknown"
+        return "weekly" if weekly_count >= monthly_count else "monthly"
+    except Exception:
+        return "unknown"
+
+
 def load_favorites() -> List[Dict]:
     """즐겨찾기 목록을 로드합니다. 파일이 없으면 빈 목록을 반환합니다."""
     _ensure_data_dir()
@@ -26,7 +45,12 @@ def load_favorites() -> List[Dict]:
     with open(FAVORITES_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
     # 존재하지 않는 폴더는 제거
-    return [item for item in data if os.path.isdir(item.get("path", ""))]
+    result = [item for item in data if os.path.isdir(item.get("path", ""))]
+    # group 필드 기본값 보완 (구버전 데이터 호환)
+    for item in result:
+        if "group" not in item:
+            item["group"] = "unknown"
+    return result
 
 
 def save_favorites(favorites: List[Dict]) -> None:
@@ -45,9 +69,30 @@ def add_favorite(folder_path: str, display_name: str = "") -> List[Dict]:
         if os.path.normpath(item["path"]) == normalized:
             return favorites
     name = display_name.strip() or os.path.basename(normalized)
-    favorites.append({"path": normalized, "name": name})
+    group = detect_folder_group(normalized)
+    favorites.append({"path": normalized, "name": name, "group": group})
     save_favorites(favorites)
     return favorites
+
+
+def reorder_favorites(new_order_paths: List[str]) -> List[Dict]:
+    """경로 목록 순서에 따라 즐겨찾기를 재정렬합니다."""
+    favorites = load_favorites()
+    path_map = {os.path.normpath(f["path"]): f for f in favorites}
+    reordered = []
+    seen: set = set()
+    for p in new_order_paths:
+        norm = os.path.normpath(p)
+        if norm in path_map and norm not in seen:
+            reordered.append(path_map[norm])
+            seen.add(norm)
+    # 순서 목록에 없는 항목은 뒤에 유지
+    for f in favorites:
+        norm = os.path.normpath(f["path"])
+        if norm not in seen:
+            reordered.append(f)
+    save_favorites(reordered)
+    return reordered
 
 
 def remove_favorite(folder_path: str) -> List[Dict]:
@@ -89,7 +134,11 @@ def import_favorites(source_path: str) -> List[Dict]:
     for item in imported:
         normalized = os.path.normpath(item.get("path", ""))
         if normalized and normalized not in existing_paths and os.path.isdir(normalized):
-            current.append({"path": normalized, "name": item.get("name", os.path.basename(normalized))})
+            current.append({
+                "path": normalized,
+                "name": item.get("name", os.path.basename(normalized)),
+                "group": item.get("group", "unknown"),
+            })
             existing_paths.add(normalized)
     save_favorites(current)
     return current
